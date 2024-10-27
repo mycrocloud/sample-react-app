@@ -28,7 +28,7 @@ function App() {
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
-      <p>Deploy with MycroCloud (v2)</p>
+      <p>Deployed on MycroCloud (2024/10/28 00:20)</p>
     </>
   );
 }
