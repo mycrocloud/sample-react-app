@@ -29,6 +29,10 @@ function App() {
         Click on the Vite and React logos to learn more
       </p>
       <p>Deployed on MycroCloud (2024/11/09 23:00)</p>
+      <p>
+        smee -u https://smee.io/tSjaeVOJQt2efr1H -t
+        http://localhost:5100/Webhooks/github/postreceive/2?token=5aecac5c-26c1-441e-b5c0-5fa0ac78e3c9
+      </p>
     </>
   );
 }
