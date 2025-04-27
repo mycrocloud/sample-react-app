@@ -28,7 +28,7 @@ function App() {
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
-      <p>Deployed on MycroCloud (2025/04/26_002)</p>
+      <p>Deployed on MycroCloud (003)</p>
       <p>
         smee -u https://smee.io/tSjaeVOJQt2efr1H -t
         http://localhost:5100/Webhooks/github/postreceive/2?token=5aecac5c-26c1-441e-b5c0-5fa0ac78e3c9
