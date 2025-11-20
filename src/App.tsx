@@ -1,10 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
 
 function App() {
   const [count, setCount] = useState(0);
+  const [time, setTime] = useState();
+
+  useEffect(() => {
+    (async () => {
+      const response = await fetch("/api/now");
+      const data = await response.json();
+      setTime(data.now);
+    })();
+  }, [])
 
   return (
     <>
@@ -28,11 +37,7 @@ function App() {
       <p className="read-the-docs">
         Click on the Vite and React logos to learn more
       </p>
-      <p>Deployed on MycroCloud</p>
-      <p>
-        smee -u https://smee.io/tSjaeVOJQt2efr1H -t
-        http://localhost:5100/Webhooks/github/postreceive/2?token=5aecac5c-26c1-441e-b5c0-5fa0ac78e3c9
-      </p>
+      <p>Time: {time}</p>
     </>
   );
 }
