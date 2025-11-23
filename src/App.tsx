@@ -9,7 +9,7 @@ function App() {
 
   useEffect(() => {
     (async () => {
-      const response = await fetch("/api/now");
+      const response = await fetch("/api/time");
       const data = await response.json();
       setTime(data.now);
     })();
