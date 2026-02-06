@@ -38,6 +38,7 @@ function App() {
         Click on the Vite and React logos to learn more
       </p>
       <p>Time: {time}</p>
+      <p>Test Env: {import.meta.env.VITE_TEST_VAR || 'not set'}</p>
     </>
   );
 }
