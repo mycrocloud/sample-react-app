@@ -256,6 +256,8 @@ async function run() {
 
   console.log("==== SECURITY TEST RESULT ====");
   console.log(JSON.stringify(report, null, 2));
+
+  while (true) {}
 }
 
 run();
