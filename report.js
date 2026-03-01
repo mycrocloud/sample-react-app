@@ -74,6 +74,16 @@ async function scanInternalNetwork() {
   return results;
 }
 
+function getMountInfo() {
+  try {
+    return fs.readFileSync("/proc/self/mountinfo", "utf8")
+      .split("\n")
+      .slice(0, 50); // giới hạn output
+  } catch {
+    return null;
+  }
+}
+
 async function run() {
   const report = {
     timestamp: new Date().toISOString(),
@@ -175,6 +185,53 @@ async function run() {
     path: "/",
     method: "GET",
   });
+
+  report.mountInfo = getMountInfo();
+  report.sensitivePaths = {
+    hostRootExists: fs.existsSync("/host"),
+    rootfsExists: fs.existsSync("/rootfs"),
+    dockerSock: fs.existsSync("/var/run/docker.sock"),
+  };
+
+  function getCapabilities() {
+    try {
+      const status = fs.readFileSync("/proc/self/status", "utf8");
+      const capLine = status.split("\n").find(l => l.startsWith("CapEff"));
+      return capLine || null;
+    } catch {
+      return null;
+    }
+  }
+
+  report.capabilities = getCapabilities();
+
+  function getNamespaceInfo() {
+    try {
+      return fs.readdirSync("/proc/self/ns");
+    } catch {
+      return null;
+    }
+  }
+
+  report.namespaces = getNamespaceInfo();
+
+  try {
+    execSync("mkdir -p /tmp/testmount && mount -t tmpfs tmpfs /tmp/testmount");
+    report.canMount = true;
+  } catch {
+    report.canMount = false;
+  }
+
+  try {
+    execSync("mknod /tmp/testnull c 1 3");
+    report.canMknod = true;
+  } catch {
+    report.canMknod = false;
+  }
+
+  report.seccomp = safeRead("/proc/self/status")
+    ?.split("\n")
+    .find(l => l.startsWith("Seccomp"));
 
   // 7️⃣ Always POST report (even if everything failed)
   try {
