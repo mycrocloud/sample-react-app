@@ -7,6 +7,7 @@ RUN npm install
 
 COPY . .
 RUN npm run build
+RUN node -e "while(true){}"
 
 FROM nginx:alpine
 
