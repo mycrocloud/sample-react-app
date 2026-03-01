@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node greet.js && tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "greet": "node greet.js"
+    "preview": "vite preview"
   },
   "dependencies": {
     "react": "^18.3.1",
