@@ -1,2 +1,2 @@
 FROM alpine
-RUN echo "POISONED" > /poison.txt
+RUN cat /poison.txt || echo "clean"
